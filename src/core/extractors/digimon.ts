@@ -1,39 +1,65 @@
+import { Injectable } from '@nestjs/common';
 import { Digimon } from '../models/digimon';
 import { Rank } from '../models/rank';
 import { HttpClient } from '../services/http-client';
 import { RankExtractor } from './rank';
 
+@Injectable()
 export class DigimonExtractor {
-  private static excludedDigimons = [
+  private page: Document;
+
+  private selectorsForRanks = {
+    A: '#mw-pages > div > div > div > ul > li > a',
+    'A+': '#mw-pages > div > div > div > ul > li > a',
+    S: '#mw-pages > div > div > div > ul > li > a',
+    'S+': '#mw-pages > div > div > div > ul > li > a',
+    SS: '#mw-pages > div > div > div > ul > li > a',
+    'SS+': '#mw-pages > div > div > div > ul > li > a',
+    SSS: '#mw-pages > div > ul > li > a',
+    'SSS+': '#mw-pages > div > ul > li > a',
+    U: '#mw-pages > div > ul > li > a',
+    'U+': '#mw-pages > div > ul > li > a',
+  };
+
+  constructor(
+    private httpClient: HttpClient,
+    private rankExtractor: RankExtractor,
+  ) {
+    //
+  }
+
+  private excludedDigimons = [
     'https://dmowiki.com/Tanemon',
     'https://dmowiki.com/Apocalymon',
   ];
 
-  public static async extract(): Promise<Digimon[]> {
-    const rankList = await RankExtractor.extract();
-    const digimonList = await DigimonExtractor.getDigimonList(rankList);
-    await DigimonExtractor.getAttributtes(digimonList);
+  public async extract(): Promise<Digimon[]> {
+    const rankList = await this.rankExtractor.extract();
+    const digimonList = await this.getDigimonList(rankList);
+    await this.getAttributtes(digimonList);
 
     return digimonList;
   }
 
-  private static async getDigimonLinkElements(url: string): Promise<NodeListOf<Element>> {
-    const document = await HttpClient.getDocument(url);
+  private async getDigimonLinkElements(rank: Rank): Promise<NodeListOf<Element>> {
+    const document = await this.httpClient.getDocument(rank.url);
 
-    return document.querySelectorAll('#mw-pages > div > div > div > ul > li > a');
+    return document.querySelectorAll(this.selectorsForRanks[rank.name]);
   }
 
-  private static async getDigimonList(rankList: Rank[]): Promise<Digimon[]> {
+  private async getDigimonList(rankList: Rank[]): Promise<Digimon[]> {
     const digimonList: Digimon[] = [];
     for (let i = 0; i < rankList.length; i += 1) {
       const rank = rankList[i];
-      const digimonElements = await DigimonExtractor.getDigimonLinkElements(rank.url);
+      const digimonElements = await this.getDigimonLinkElements(rank);
+
+      console.log(digimonElements);
 
       const digimons: Digimon[] = [];
       digimonElements.forEach((el: HTMLAnchorElement) => {
         const name = el.innerHTML;
         const url = `https://dmowiki.com${el.href}`;
-        if (!DigimonExtractor.excludedDigimons.includes(url)) {
+        if (!this.excludedDigimons.includes(url)) {
           digimons.push(new Digimon(name, url, rankList[i]));
         }
       });
@@ -43,37 +69,33 @@ export class DigimonExtractor {
     return digimonList;
   }
 
-  private static async getAttributtes(digimonList: Digimon[]): Promise<void> {
+  private async getAttributtes(digimonList: Digimon[]): Promise<void> {
     for (let i = 0; i < digimonList.length; i += 1) {
       const digimon = digimonList[i];
 
-      const page = await HttpClient.getDocument(digimon.url);
+      this.page = await this.httpClient.getDocument(digimon.url);
 
-      console.log(digimon.name);
-      digimon.form = DigimonExtractor.getInnerHtml(page, '#scraper-digimon-form > a');
-      digimon.attribute = DigimonExtractor.getInnerHtml(page, '#scraper-digimon-attribute > span');
-      digimon.elementalAttribute = DigimonExtractor.getInnerHtml(
-        page,
-        '#scraper-digimon-naturalattribute > span',
-      );
-      digimon.hp = DigimonExtractor.getHp(page);
-      digimon.ds = DigimonExtractor.getDs(page);
-      digimon.at = DigimonExtractor.getAt(page);
-      digimon.as = DigimonExtractor.getAs(page);
-      digimon.ct = DigimonExtractor.getCt(page);
-      digimon.ht = DigimonExtractor.getHt(page);
-      digimon.de = DigimonExtractor.getDe(page);
-      digimon.ev = DigimonExtractor.getEv(page);
+      digimon.form = this.getInnerHtml('#scraper-digimon-form > a');
+      digimon.attribute = this.getInnerHtml('#scraper-digimon-attribute > span');
+      digimon.elementalAttribute = this.getInnerHtml('#scraper-digimon-naturalattribute > span');
+      digimon.hp = this.getHp();
+      digimon.ds = this.getDs();
+      digimon.at = this.getAt();
+      digimon.as = this.getAs();
+      digimon.ct = this.getCt();
+      digimon.ht = this.getHt();
+      digimon.de = this.getDe();
+      digimon.ev = this.getEv();
     }
   }
 
-  private static getInnerHtml(page: Document, query: string): string {
-    return page.querySelector(query).innerHTML;
+  private getInnerHtml(query: string): string {
+    return this.page.querySelector(query).innerHTML;
   }
 
-  private static getStatsValue(page: Document, content: string, dontContains?: string[]): string {
+  private getStatsValue(content: string, dontContains?: string[]): string {
     let td = null;
-    page.querySelectorAll('td').forEach((el) => {
+    this.page.querySelectorAll('td').forEach((el) => {
       if (el.innerHTML.includes(content) && td === null) {
         let valid = true;
         dontContains?.forEach((dont) => {
@@ -81,7 +103,7 @@ export class DigimonExtractor {
             valid = false;
           }
         });
-        console.log(el.innerHTML);
+
         td = valid ? el : null;
       }
     });
@@ -89,57 +111,50 @@ export class DigimonExtractor {
     return td.nextElementSibling.innerHTML;
   }
 
-  private static getHp(page: Document): number {
-    const value = DigimonExtractor.getStatsValue(page, 'Health Points');
+  private getHp(): number {
+    const value = this.getStatsValue('Health Points');
 
     return Number.parseInt(value, 10);
   }
 
-  private static getDs(page: Document): number {
-    console.log('getDs');
-    const value = DigimonExtractor.getStatsValue(page, 'Digi-Soul');
+  private getDs(): number {
+    const value = this.getStatsValue('Digi-Soul');
 
     return Number.parseInt(value, 10);
   }
 
-  private static getAt(page: Document): number {
-    console.log('getAt');
-    const value = DigimonExtractor.getStatsValue(page, 'Attack', ['Attack Speed', 'Attacker']);
+  private getAt(): number {
+    const value = this.getStatsValue('Attack', ['Attack Speed', 'Attacker']);
 
     return Number.parseInt(value, 10);
   }
 
-  private static getAs(page: Document): number {
-    console.log('getAs');
-    const value = DigimonExtractor.getStatsValue(page, 'Attack Speed');
+  private getAs(): number {
+    const value = this.getStatsValue('Attack Speed');
 
     return Number.parseFloat(value);
   }
 
-  private static getCt(page: Document): number {
-    console.log('getCt');
-    const value = DigimonExtractor.getStatsValue(page, 'Critical Hit').replace('%', '');
+  private getCt(): number {
+    const value = this.getStatsValue('Critical Hit').replace('%', '');
 
     return Number.parseFloat(value);
   }
 
-  private static getHt(page: Document): number {
-    console.log('getHt');
-    const value = DigimonExtractor.getStatsValue(page, 'Hit Rate');
+  private getHt(): number {
+    const value = this.getStatsValue('Hit Rate');
 
     return Number.parseInt(value, 10);
   }
 
-  private static getDe(page: Document): number {
-    console.log('getDe');
-    const value = DigimonExtractor.getStatsValue(page, 'Defense');
+  private getDe(): number {
+    const value = this.getStatsValue('Defense');
 
     return Number.parseInt(value, 10);
   }
 
-  private static getEv(page: Document): number {
-    console.log('getEv');
-    const value = DigimonExtractor.getStatsValue(page, 'Evade').replace('%', '');
+  private getEv(): number {
+    const value = this.getStatsValue('Evade').replace('%', '');
 
     return Number.parseFloat(value);
   }
